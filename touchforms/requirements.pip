@@ -1,0 +1,8 @@
+django==1.2.5
+couchdbkit==0.5.7
+django-appconf==0.4.1
+django-staticfiles==1.1.2
+http-parser==0.7.1
+restkit==3.3.2
+wsgiref==0.1.2
+python-memcached==1.48
