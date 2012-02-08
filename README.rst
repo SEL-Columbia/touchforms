@@ -16,16 +16,19 @@ Getting started
 Get the prerequisites.
 Get the code.
 
-Syncdb::
+Setup::
     pip install -r requirements.pip
+    cp localsettings.example.py localsettings.py
+
+Syncdb::
     python manage.py syncdb
-    
+
 Run the backend::
     cd backend
     jython xformserver.py 4444
 
 Run the django frontend::
     python manage.py runserver
-    
+
 Play forms!
 
