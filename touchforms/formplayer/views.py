@@ -4,7 +4,7 @@ from touchforms.formplayer.models import XForm, PlaySession
 from touchforms.formplayer.const import *
 from touchforms.formplayer.autocomplete import autocompletion, DEFAULT_NUM_SUGGESTIONS
 from django.http import HttpResponseRedirect, HttpResponse,\
-    HttpResponseServerError, HttpRequest
+    HttpResponseServerError, HttpRequest, HttpResponseNotFound
 from django.core.urlresolvers import reverse
 import logging
 import httplib
@@ -17,7 +17,7 @@ from collections import defaultdict
 from StringIO import StringIO
 from touchforms.formplayer.signals import xform_received
 from django.template.context import RequestContext
-from django.shortcuts import render_to_response
+from django.shortcuts import render_to_response, get_object_or_404
 from django.views.decorators.csrf import csrf_exempt
 import tempfile
 import os
@@ -34,8 +34,15 @@ def xform_list(request):
                 tmp_file = os.fdopen(tmp_file_handle, 'w')
                 tmp_file.write(file.read())
                 tmp_file.close()
-                new_form = XForm.from_file(tmp_file_path, str(file))
+                new_form = XForm.from_file_with_uuid(tmp_file_path, request.POST.get('uuid'))
                 notice = "Created form: %s" % file
+                if request.POST['format'] == 'json':
+                    base_url = request.build_absolute_uri()[:-1]
+                    return HttpResponse(json.dumps({
+                        'uuid': new_form.uuid,
+                        'url': '%s%s' % (base_url,
+                            reverse('xform_play_kb', kwargs={'xform_uuid': new_form.uuid}))
+                    }), content_type='application/json')
             except Exception, e:
                 logging.error("Problem creating xform from %s: %s" % (file, e))
                 success = False
@@ -43,27 +50,21 @@ def xform_list(request):
         else:
             success = False
             notice = "No uploaded file set."
-    if request.POST['format'] == 'json':
-        base_url = request.build_absolute_uri()[:-1]
-        return HttpResponse(json.dumps({
-            'id': new_form.id,
-            'url': '%s%s' % (base_url,
-                reverse('xform_play_kb', kwargs={'xform_id': new_form.id}))
-        }), content_type='application/json')
+        return HttpResponseNotFound()
     else:
         for form in XForm.objects.all():
             forms_by_namespace[form.namespace].append(form)
-        return render_to_response("formplayer/xform_list.html", 
+        return render_to_response("formplayer/xform_list.html",
                                   {'forms_by_namespace': dict(forms_by_namespace),
                                    "success": success,
                                    "notice": notice},
                                   context_instance=RequestContext(request))
-                              
-def download(request, xform_id):
+
+def download(request, xform_uuid):
     """
     Download an xform
     """
-    xform = get_object_or_404(XForm, id=xform_id)
+    xform = get_object_or_404(XForm, uuid=xform_uuid)
     response = HttpResponse(mimetype='application/xml')
     response.write(xform.file.read()) 
     return response
@@ -77,8 +78,7 @@ def coalesce(*args):
 
 @csrf_exempt
 def enter_form(request, **kwargs):
-    xform_id = kwargs.get('xform_id')
-    xform = kwargs.get('xform')
+    xform = get_object_or_404(XForm, uuid=kwargs.get('xform_uuid'))
     instance_xml = kwargs.get('instance_xml')
     preloader_data = coalesce(kwargs.get('preloader_data'), {})
     input_mode = coalesce(kwargs.get('input_mode'), 'touch')
@@ -86,9 +86,6 @@ def enter_form(request, **kwargs):
     abort_callback = coalesce(kwargs.get('onabort'), default_abort)
     force_template = coalesce(kwargs.get('force_template'), None)
 
-    if not xform:
-        xform = get_object_or_404(XForm, id=xform_id)
-        
     if request.method == "POST":
         if request.POST["type"] == 'form-complete':
             instance_xml = request.POST["output"]
