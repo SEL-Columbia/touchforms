@@ -4,11 +4,11 @@
 
 Prerequisites
 =============
-Python (2.6+ recommended)
-Django (1.2+ recommended)
-Java (1.5+ recommended)
-Jython (2.5+ required)
-Couch (1.1+ required)
+* Python (2.6+ recommended)
+* Django (1.2+ recommended)
+* Java (1.5+ recommended)
+* Jython (2.5+ required)
+* Couch (1.1+ required)
 
 
 Getting started
