@@ -21,6 +21,11 @@ from django.shortcuts import render_to_response, get_object_or_404
 from django.views.decorators.csrf import csrf_exempt
 import tempfile
 import os
+import urllib2
+from urllib import urlencode
+from poster.encode import multipart_encode
+from poster.streaminghttp import register_openers
+
 
 def xform_list(request):
     forms_by_namespace = defaultdict(list)
@@ -82,7 +87,8 @@ def enter_form(request, **kwargs):
     instance_xml = kwargs.get('instance_xml')
     preloader_data = coalesce(kwargs.get('preloader_data'), {})
     input_mode = coalesce(kwargs.get('input_mode'), 'touch')
-    submit_callback = coalesce(kwargs.get('onsubmit'), default_submit)
+    submit_func = external_submit if settings.EXTERNAL_SUBMISSION_URL else default_submit
+    submit_callback = coalesce(kwargs.get('onsubmit'), submit_func)
     abort_callback = coalesce(kwargs.get('onabort'), default_abort)
     force_template = coalesce(kwargs.get('force_template'), None)
 
@@ -132,6 +138,26 @@ def default_submit(xform, instance_xml):
     response = HttpResponse(mimetype='application/xml')
     response.write(instance_xml)
     return response
+
+def external_submit(xform, instance_xml):
+    register_openers()
+    url = settings.EXTERNAL_SUBMISSION_URL
+    response = None
+    with tempfile.TemporaryFile() as tmp:
+        tmp.write(instance_xml.encode('utf-8'))
+        tmp.seek(0)
+        values = {
+            'xml_submission_file': tmp,
+            'uuid': xform.uuid
+        }
+        data, headers = multipart_encode(values)
+        request = urllib2.Request(url, data, headers)
+        try:
+            response = urllib2.urlopen(request)
+            return HttpResponse("yay")
+        except urllib2.URLError:
+            pass # what to do?
+    return HttpResponse("boo")
 
 def default_abort(xform, abort_url='/'):
     return HttpResponseRedirect(abort_url)

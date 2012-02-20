@@ -6,3 +6,4 @@ http-parser==0.7.1
 restkit==3.3.2
 wsgiref==0.1.2
 python-memcached==1.48
+poster==0.8.1
