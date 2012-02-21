@@ -152,11 +152,13 @@ def external_submit(xform, instance_xml):
         }
         data, headers = multipart_encode(values)
         request = urllib2.Request(url, data, headers)
-        try:
-            response = urllib2.urlopen(request)
-            return HttpResponse("yay")
-        except urllib2.URLError:
-            pass # what to do?
+        response = urllib2.urlopen(request)
+        return HttpResponse(response.read())
+#        try:
+#            response = urllib2.urlopen(request)
+#            return response
+#        except urllib2.URLError:
+#            pass # what to do?
     return HttpResponse("boo")
 
 def default_abort(xform, abort_url='/'):
