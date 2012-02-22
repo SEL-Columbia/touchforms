@@ -5,8 +5,9 @@ from fabric.decorators import hosts
 
 DEFAULTS = {
     'home': '/home/wsgi/srv/',
-    'repo_name': 'touchforms,
-    }
+    'repo_name': 'touchforms',
+    'django_dir': 'touchforms',
+}
 
 DEPLOYMENTS = {
     'dev': {
@@ -29,7 +30,9 @@ def setup_env(deployment_name):
     env.update(DEFAULTS)
     env.update(DEPLOYMENTS[deployment_name])
     env.project_directory = os.path.join(env.home, env.project)
-    env.code_src = os.path.join(env.project_directory, env.repo_name)
+    # django project is embedded within repo
+    env.code_src = os.path.join(env.project_directory, env.repo_name,
+        env.django_dir)
     env.wsgi_config_file = os.path.join(
         env.project_directory, 'apache', 'environment.wsgi')
     env.pip_requirements_file = os.path.join(env.code_src, 'requirements.pip')
@@ -42,6 +45,7 @@ def deploy(deployment_name):
         run("git pull origin %(branch)s" % env)
     run_in_virtualenv("pip install -r %s" % env.pip_requirements_file)
     with cd(env.code_src):
+        run_in_virtualenv("python manage.py syncdb")
         run_in_virtualenv("python manage.py migrate")
         run_in_virtualenv("python manage.py collectstatic --noinput")
     run('touch %s' % env.wsgi_config_file)
