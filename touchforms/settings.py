@@ -86,7 +86,8 @@ INSTALLED_APPS = (
     # Uncomment the next line to enable the admin:
     'django.contrib.admin',
     'staticfiles',
-    'formplayer'
+    'formplayer',
+    'south',
 )
 
 #e.g., 1.0, 1.1a, 1.2b, 1.3rc2
