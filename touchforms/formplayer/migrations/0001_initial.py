@@ -7,8 +7,10 @@ from django.db import models
 class Migration(SchemaMigration):
 
     def forwards(self, orm):
+        pass
 
     def backwards(self, orm):
+        pass
 
     models = {
         'formplayer.xform': {
