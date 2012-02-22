@@ -46,7 +46,7 @@ def xform_list(request):
                     return HttpResponse(json.dumps({
                         'uuid': new_form.uuid,
                         'url': '%s%s' % (base_url,
-                            reverse('xform_play_kb', kwargs={'xform_uuid': new_form.uuid}))
+                            reverse('xform_play_all', kwargs={'xform_uuid': new_form.uuid}))
                     }), content_type='application/json')
             except Exception, e:
                 logging.error("Problem creating xform from %s: %s" % (file, e))
@@ -57,6 +57,7 @@ def xform_list(request):
             notice = "No uploaded file set."
         return HttpResponseNotFound()
     else:
+        return HttpResponse()
         for form in XForm.objects.all():
             forms_by_namespace[form.namespace].append(form)
         return render_to_response("formplayer/xform_list.html",
