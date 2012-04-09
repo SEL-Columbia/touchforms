@@ -11,7 +11,7 @@ from java.util import Vector
 from java.io import StringReader
 
 import customhandlers
-from util import to_jdate, to_pdate, to_jtime, to_ptime, to_vect, index_from_str
+from util import to_jdate, to_pdate, to_jtime, to_ptime, to_vect, to_arr, index_from_str
     
 from setup import init_classpath, init_jr_engine
 import logging
@@ -26,6 +26,7 @@ from org.javarosa.core.model import Constants, FormIndex
 from org.javarosa.core.model.data import *
 from org.javarosa.core.model.data.helper import Selection
 from org.javarosa.model.xform import XFormSerializingVisitor as FormSerializer
+from org.javarosa.core.model.instance import InstanceInitializationFactory as IIF
 
 DEBUG = False
 
@@ -98,7 +99,7 @@ def load_form(xform, instance=None, extensions=[], preload_data={}):
 
     customhandlers.attach_handlers(form, preload_data, extensions)
 
-    form.initialize(instance == None)
+    form.initialize(instance == None, IIF())
     return form
 
 class SequencingException(Exception):
@@ -106,7 +107,7 @@ class SequencingException(Exception):
 
 class XFormSession:
     def __init__(self, xform_raw=None, xform_path=None, instance_raw=None, instance_path=None,
-                 preload_data={}, extensions=[], nav_mode='prompt'):
+                 init_lang=None, preload_data={}, extensions=[], nav_mode='prompt'):
         self.lock = threading.Lock()
         self.nav_mode = nav_mode
         self.seq_id = 0
@@ -126,6 +127,10 @@ class XFormSession:
         self.form = load_form(xform, instance, extensions, preload_data)
         self.fem = FormEntryModel(self.form, FormEntryModel.REPEAT_STRUCTURE_NON_LINEAR)
         self.fec = FormEntryController(self.fem)
+
+        if init_lang is not None:
+            self.fec.setLanguage(init_lang)
+
         self._parse_current_event()
 
         self.update_last_activity()
@@ -221,7 +226,6 @@ class XFormSession:
             event['type'] = 'form-start'
         elif status == self.fec.EVENT_END_OF_FORM:
             event['type'] = 'form-complete'
-            self.fem.getForm().postProcessInstance() 
         elif status == self.fec.EVENT_QUESTION:
             event['type'] = 'question'
             self._parse_question(event)
@@ -272,18 +276,18 @@ class XFormSession:
                     Constants.DATATYPE_NULL: 'str',
                     Constants.DATATYPE_TEXT: 'str',
                     Constants.DATATYPE_INTEGER: 'int',
+                    Constants.DATATYPE_LONG: 'longint',              
                     Constants.DATATYPE_DECIMAL: 'float',
                     Constants.DATATYPE_DATE: 'date',
                     Constants.DATATYPE_TIME: 'time',
                     Constants.DATATYPE_CHOICE: 'select',
                     Constants.DATATYPE_CHOICE_LIST: 'multiselect',
+                    Constants.DATATYPE_GEOPOINT: 'geo',
 
                     # not supported yet
                     Constants.DATATYPE_DATE_TIME: 'datetime',
-                    Constants.DATATYPE_GEOPOINT: 'geo',
                     Constants.DATATYPE_BARCODE: 'barcode',
                     Constants.DATATYPE_BINARY: 'binary',
-                    Constants.DATATYPE_LONG: 'longint',              
                 }[q.getDataType()]
             except KeyError:
                 event['datatype'] = 'unrecognized'
@@ -296,11 +300,7 @@ class XFormSession:
             value = q.getAnswerValue()
             if value == None:
                 event['answer'] = None
-            elif event['datatype'] == 'int':
-                event['answer'] = value.getValue()
-            elif event['datatype'] == 'float':
-                event['answer'] = value.getValue()
-            elif event['datatype'] == 'str':
+            elif event['datatype'] in ('int', 'float', 'str', 'longint'):
                 event['answer'] = value.getValue()
             elif event['datatype'] == 'date':
                 event['answer'] = to_pdate(value.getValue())
@@ -310,6 +310,8 @@ class XFormSession:
                 event['answer'] = value.getValue().index + 1
             elif event['datatype'] == 'multiselect':
                 event['answer'] = [sel.index + 1 for sel in value.getValue()]
+            elif event['datatype'] == 'geo':
+                event['answer'] = list(value.getValue())[:2]
 
     def _parse_repeat_juncture(self, event):
         r = self.fem.getCaptionPrompt(event['ix'])
@@ -346,10 +348,18 @@ class XFormSession:
             # answer verbatim
             return {'status': 'success'}
 
+        def multians(a):
+            if hasattr(a, '__iter__'):
+                return a
+            else:
+                return str(a).split()
+
         if answer == None or str(answer).strip() == '' or answer == [] or datatype == 'info':
             ans = None
         elif datatype == 'int':
             ans = IntegerData(int(answer))
+        elif datatype == 'longint':
+            ans = LongData(int(answer))
         elif datatype == 'float':
             ans = DecimalData(float(answer))
         elif datatype == 'str':
@@ -361,11 +371,9 @@ class XFormSession:
         elif datatype == 'select':
             ans = SelectOneData(event['choices'][int(answer) - 1].to_sel())
         elif datatype == 'multiselect':
-            if hasattr(answer, '__iter__'):
-                ans_list = answer
-            else:
-                ans_list = str(answer).split()
-            ans = SelectMultiData(to_vect(event['choices'][int(k) - 1].to_sel() for k in ans_list))
+            ans = SelectMultiData(to_vect(event['choices'][int(k) - 1].to_sel() for k in multians(answer)))
+        elif datatype == 'geo':
+            ans = GeoPointData(to_arr((float(x) for x in multians(answer)), 'd'))
 
         result = self.fec.answerQuestion(*([ans] if ix is None else [ix, ans]))
         if result == self.fec.ANSWER_REQUIRED_BUT_EMPTY:
@@ -401,6 +409,16 @@ class XFormSession:
         #currently in the form api this always succeeds, but theoretically there could
         #be unsatisfied constraints that make it fail. how to handle them here?
         self.fec.newRepeat(self.fem.getFormIndex())
+
+    def set_locale(self, lang):
+        self.fec.setLanguage(lang)
+        return self._parse_current_event()
+
+    def get_locales(self):
+        return self.fem.getLanguages() or []
+
+    def finalize(self):
+        self.fem.getForm().postProcessInstance() 
 
     def parse_ix(self, s_ix):
         return index_from_str(s_ix, self.form)
@@ -441,13 +459,13 @@ class choice(object):
     def __json__(self):
         return json.dumps(repr(self))
 
-def open_form(form_name, instance_xml=None, extensions=[], preload_data={}, nav_mode='prompt'):
+def open_form(form_name, instance_xml=None, lang=None, extensions=[], preload_data={}, nav_mode='prompt'):
     if not os.path.exists(form_name):
         return {'error': 'no form found at %s' % form_name}
 
-    xfsess = XFormSession(xform_path=form_name, instance_raw=instance_xml, preload_data=preload_data, extensions=extensions, nav_mode=nav_mode)
+    xfsess = XFormSession(xform_path=form_name, instance_raw=instance_xml, init_lang=lang, preload_data=preload_data, extensions=extensions, nav_mode=nav_mode)
     sess_id = global_state.new_session(xfsess)
-    return xfsess.response({'session_id': sess_id, 'title': xfsess.form_title()})
+    return xfsess.response({'session_id': sess_id, 'title': xfsess.form_title(), 'langs': xfsess.get_locales()})
 
 def answer_question (session_id, answer, ix):
     with global_state.get_session(session_id) as xfsess:
@@ -503,6 +521,11 @@ def submit_form(session_id, answers, prevalidated):
 
         return xfsess.response(resp, no_next=True)
 
+def set_locale(session_id, lang):
+    with global_state.get_session(session_id) as xfsess:
+        ev = xfsess.set_locale(lang)
+        return xfsess.response({}, ev)
+
 def next_event (xfsess):
     ev = xfsess.next_event()
     if ev['type'] != 'form-complete':
@@ -518,6 +541,7 @@ def prev_event (xfsess):
     return at_start, ev
 
 def save_form (xfsess, persist=False):
+    xfsess.finalize()
     xml = xfsess.output()
     if persist:
         instance_id = global_state.save_instance(xml)
