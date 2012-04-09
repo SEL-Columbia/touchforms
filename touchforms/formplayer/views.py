@@ -25,7 +25,7 @@ import urllib2
 from urllib import urlencode
 from poster.encode import multipart_encode
 from poster.streaminghttp import register_openers
-
+from . import api
 
 def xform_list(request):
     forms_by_namespace = defaultdict(list)
@@ -123,7 +123,9 @@ def form_entry_new(request, xform, instance_xml, preloader_data, input_mode,
             "instance_xml": json.dumps(instance_xml),
             "preloader_data": json.dumps(preloader_data),
             "dim": get_player_dimensions(request),
-            "fullscreen": request.GET.get('mode', '').startswith('full')
+            "fullscreen": request.GET.get('mode', '').startswith('full'),
+            "lang": request.GET.get('lang'),
+            'maps_api_key': settings.GMAPS_API_KEY,
         }, context_instance=RequestContext(request))
 
 def form_entry_abort(request, xform, callback):
@@ -204,7 +206,7 @@ def play_remote(request, session_id=None, playsettings=None):
             next=playsettings.get('next'),
             abort=playsettings.get('abort'),
             input_mode=playsettings.get('input_mode'),
-            preloader_data=json.loads(playsettings.get('data')),
+            preloader_data=json.loads(playsettings.get('data', '{}')),
             xform_id=new_form.id,
             saved_instance=playsettings.get('instance')
         )
@@ -261,19 +263,9 @@ def get_player_dimensions(request):
 def player_proxy(request):
     """Proxy to an xform player, to avoid cross-site scripting issues"""
     data = request.raw_post_data if request.method == "POST" else None
-    response = _post_data(data, settings.XFORMS_PLAYER_URL, content_type="text/json")
+    response = api.post_data(data, settings.XFORMS_PLAYER_URL, content_type="text/json")
     return HttpResponse(response)
 
-def _post_data(data, url, content_type):
-    up = urlparse(url)
-    headers = {}
-    headers["content-type"] = content_type
-    headers["content-length"] = len(data)
-    conn = httplib.HTTPConnection(up.netloc)
-    conn.request('POST', up.path, data, headers)
-    resp = conn.getresponse()
-    results = resp.read()
-    return results
     
 def api_preload_provider(request):
     param = request.GET.get('param', "")
