@@ -14,6 +14,13 @@ DEPLOYMENTS = {
         'project': 'touchforms_dev',
         'branch': 'master',
     },
+    'prod': {
+        'home': '/home/ubuntu/srv/',
+        'host_string': 'ubuntu@23.21.134.243',
+        'project': 'touchforms-ec2',
+        'branch': 'master',
+        'key_filename': os.path.expanduser('~/.ssh/modilabs.pem'),
+    },
 }
 
 
