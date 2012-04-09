@@ -516,45 +516,188 @@ function DateEntry (args) {
 
 }
 
-function TimeOfDayEntry () {
-  this.HOUR_MAX = 23;
-  this.MINUTE_MAX = 59;
+function TimeOfDayEntry (parent) {
+  inherit(this, new FreeTextEntry({parent: parent, length_limit: 5}));
 
-  inherit(this, new CompoundNumericEntry());
-
-  this.get_field_info = function () {
-    return [
-      {args: {min: 0, max: this.HOUR_MAX, paddisplay: true}, label: 'h'},
-      {args: {min: 0, max: this.MINUTE_MAX, fixedwidth: true}, label: 'm'}
-    ];
-  }
-
-  this.make_answerbar = function () {
-    var timeSpacer = new TextCaption({color: TEXT_COLOR, caption: ':', size: 1.7});
-    var content = [this.fields[0], timeSpacer, this.fields[1]];
-    var widths = ['1.3@', '.3@', '1.3@'];
-    return make_answerbar(content, widths, 'time-bar');
-  }
-
-  this.parseAnswer = function (answer) {
-    var match = /^([0-9]+) *\: *([0-9]+)$/.exec(answer);
-    if (!match) {
-      return null;
+  this.getAnswer = function () {
+    var val = this.super('getAnswer')();
+    var t = this.parseAnswer(val);
+    if (t != null) {
+      return intpad(t.h, 2) + ':' + intpad(t.m, 2);
     } else {
-      return [+match[1], +match[2]];
+      return null;
     }
   }
 
-  this.formatAnswer = function (answer) {
-    return answer[0] + ':' + answer[1];
+  this._prevalidate = function (raw) {
+    var t = this.parseAnswer($.trim(raw));
+    if (t == null || t.h < 0 || t.h >= 24 || t.m < 0 || t.m >= 60) {
+      return "Not a valid time (00:00\u201423:59)";
+    } else {
+      return null;
+    }
   }
 
-  this.outOfRangeMsg = function () {
-    return 'Time of day must be between 00:00 and 23:59';
+  this.parseAnswer = function (answer) {
+    var match = /^([0-9]{1,2})\:([0-9]{2})$/.exec(answer);
+    if (!match) {
+      return null;
+    } else {
+      return {h: +match[1], m: +match[2]};
+    }
   }
 
-  this.completeCurrentFieldMsg = function (field) {
-    return 'Enter ' + ['an hour', 'a minute'][field];
+  this.domainText = function() {
+    return 'hh:mm, 24-hour clock';
+  }
+
+  this.widgetWidth = function() {
+    return '5em';
+  }
+}
+
+function GeoPointEntry () {
+  inherit(this, new SimpleEntry());
+
+  this.timers = {};
+  this.DEFAULT = {lat: 30., lon: 0., zoom: 1, anszoom: 6};
+
+  this.load = function (q, $container) {
+    this.mkWidget(q, $container);
+    this.setAnswer(this.default_answer);
+
+    this.commit = function() {
+      q.onchange();
+    }
+  }
+
+  this.mkWidget = function (q, $container) {
+    var crosshairs = 'iVBORw0KGgoAAAANSUhEUgAAABMAAAATCAQAAADYWf5HAAAACXZwQWcAAAATAAAAEwDxf4yuAAAAAmJLR0QAAKqNIzIAAAAJcEhZcwAAAEgAAABIAEbJaz4AAAAySURBVCjPY2hgIAZiCPwHAyKUMQxbZf9RAHKwIMSg+hEQqhtJBK6MKNNGTvCSld6wQwBd8RoA55WDIgAAAABJRU5ErkJggg==';
+    var crosshair_size = 19;
+    $container.html('<table width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td id="lat"></td><td id="lon"></td><td align="right" valign="bottom"><a id="clear" href="#">clear</a></td></tr></table><div id="map"></div><div><form><input id="query"><input type="submit" id="search" value="Search"></form></div>');
+    var $map = $container.find('#map');
+    // TODO: dynamic sizing
+    var W = 400; 
+    var H = 250;
+    $map.css('width', W+'px');
+    $map.css('height', H+'px');
+
+    this.lat = null;
+    this.lon = null;
+    this.$lat = $container.find('#lat');
+    this.$lon = $container.find('#lon');
+    $.each([this.$lat, this.$lon], function(i, $e) {
+        $e.css('font-weight', 'bold');
+        $e.css('width', '8em');
+      });
+
+    var widget = this;
+    $container.find('#clear').click(function () {
+	widget.set_latlon(null, null);
+	widget.commit();
+        return false;
+      });
+
+    this.$query = $container.find('#query');
+    this.$query.css('width', '83%');
+    this.$search = $container.find('#search');
+    this.$search.css('width', '15%');
+    this.$search.click(function() {
+        q = widget.$query.val().trim();
+	if (q) {
+          widget.search(q);
+        }
+	return false;
+      });
+
+    this.map = new google.maps.Map($map[0], {
+      mapTypeId: google.maps.MapTypeId.ROADMAP,
+      center: new google.maps.LatLng(this.DEFAULT.lat, this.DEFAULT.lon),
+      zoom: this.DEFAULT.zoom
+    });
+
+    this.geocoder = new google.maps.Geocoder();
+
+    var widget = this;
+    google.maps.event.addListener(this.map, "center_changed", function() { widget.update_center(); });
+
+    $ch = $('<img src="data:image/png;base64,' + crosshairs + '">');
+    $ch.css('position', 'relative')
+    $ch.css('top', ((H/*$map.height()*/ - crosshair_size) / 2) + 'px');
+    $ch.css('left', ((W/*$map.width()*/ - crosshair_size) / 2) + 'px');
+    $ch.css('z-index', '500');
+    $map.append($ch);
+  }
+
+  this.getAnswer = function () {
+    return (this.lat != null ? [this.lat, this.lon] : null);
+  }
+
+  this.setAnswer = function (answer, postLoad) {
+    if (this.map) {
+      if (answer) {
+        this.set_latlon(answer[0], answer[1]);
+        this.map.setCenter(new google.maps.LatLng(answer[0], answer[1]));
+	this.map.setZoom(this.DEFAULT.anszoom);
+      } else {
+        this.set_latlon(null, null);
+      }
+    } else {
+      this.default_answer = answer;
+    }
+  }
+
+  this.update_center = function() {
+    var center = this.map.getCenter();
+    var lat = center.lat();
+    var lon = center.lng();
+
+    if (this.set_latlon(lat, lon)) {
+      var widget = this;
+      this.delay_action('move', function() { widget.commit(); }, 1.);
+    }
+  }
+
+  this.set_latlon = function(lat, lon) {
+    lon = lon % 360.;
+    if (lon < 0) {
+      lon += 360.
+    }
+    lon = lon % 360.;
+    if (lon >= 180.) {
+      lon -= 360.;
+    }
+
+    if (lat == this.lat && lon == this.lon) {
+      return false;
+    }
+
+    this.lat = lat;
+    this.lon = lon;
+
+    this.$lat.text(lat != null ? (lat >= 0. ? 'N' : 'S') + intpad(Math.abs(lat).toFixed(5), 8) : '??.?????');
+    this.$lon.text(lat != null ? (lon >= 0. ? 'E' : 'W') + intpad(Math.abs(lon).toFixed(5), 9) : '???.?????');
+
+    return true;
+  }
+
+  this.delay_action = function(tag, dofunc, delay) {
+    var timer = this.timers[tag];
+    if (timer) {
+      clearTimeout(timer);
+      timer = null;
+    }
+    this.timers[tag] = setTimeout(dofunc, 1000 * delay);
+  }
+
+  this.search = function(query) {
+    var map = this.map;
+    this.geocoder.geocode({'address': query}, function(results, status) {
+      if (status == google.maps.GeocoderStatus.OK) {
+        map.fitBounds(results[0].geometry.viewport);
+        map.setCenter(results[0].geometry.location);
+      }
+    });
   }
 }
 
@@ -569,6 +712,8 @@ function renderQuestion (q, $container, init_answer) {
     control = new FreeTextEntry({domain: q.domain, prose: q.domain_meta.longtext});
   } else if (q.datatype == "int") {
     control = new IntEntry();
+  } else if (q.datatype == "longint") {
+    control = new IntEntry(null, 15);
   } else if (q.datatype == "float") {
     control = new FloatEntry();
   //  } else if (q.datatype == "passwd") {
@@ -579,8 +724,10 @@ function renderQuestion (q, $container, init_answer) {
     control = new MultiSelectEntry({choices: q.choices, choicevals: q.choicevals, meta: q.domain_meta});
   } else if (q.datatype == "date") {
     control = new DateEntry(q.domain_meta);
-  //} else if (q.datatype == "time") {
-  //control = new TimeOfDayEntry();
+  } else if (q.datatype == "time") {
+    control = new TimeOfDayEntry();
+  } else if (q.datatype == "geo") {
+    control = new GeoPointEntry();
   } else {
     control = new UnsupportedEntry(q.datatype);
   }
@@ -597,4 +744,12 @@ function renderQuestion (q, $container, init_answer) {
 
 function nonce() {
   return Math.floor(Math.random()*1e9);
+}
+
+function intpad (x, n) {
+  var s = x + '';
+  while (s.length < n) {
+    s = '0' + s;
+  }
+  return s;
 }

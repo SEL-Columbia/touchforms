@@ -1,3 +1,4 @@
+import django # for verison sniffing
 import util
 
 DEBUG = True
@@ -58,7 +59,7 @@ TEMPLATE_CONTEXT_PROCESSORS = (
     "django.core.context_processors.media",
     "django.core.context_processors.request",
     "touchforms.context_processors.meta",
-    'staticfiles.context_processors.static',
+    'django.core.context_processors.static' if django.VERSION >= (1, 3) else 'staticfiles.context_processors.static',
 )
 
 MIDDLEWARE_CLASSES = (
@@ -88,6 +89,7 @@ INSTALLED_APPS = (
     'staticfiles',
     'formplayer',
     'south',
+    'django.contrib.staticfiles' if django.VERSION >= (1, 3) else 'staticfiles',
 )
 
 #e.g., 1.0, 1.1a, 1.2b, 1.3rc2
