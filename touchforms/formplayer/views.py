@@ -155,9 +155,12 @@ def external_submit(xform, instance_xml):
         }
         data, headers = multipart_encode(values)
         request = urllib2.Request(url, data, headers)
-        response = urllib2.urlopen(request)
-        return HttpResponse(response.read())
-    return HttpResponse("boo")
+        try:
+            response = urllib2.urlopen(request)
+            return HttpResponse(response.read())
+        except urllib2.HTTPError:
+            pass
+    return HttpResponse('There was a problem submitting your form.')
 
 def default_abort(xform, abort_url='/'):
     return HttpResponseRedirect(abort_url)
