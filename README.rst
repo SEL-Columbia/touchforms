@@ -32,3 +32,29 @@ Run the django frontend::
 
 Play forms!
 
+Ubuntu 12 Server Installation
+======================
+
+    # apt-get jython couchdb
+
+    $ mkdir project_env
+
+    $ virtualenv --no-site-packages project_env
+
+    $ source project_env/bin/activate
+
+    $ git clone git://github.com/modilabs/touchforms.git
+
+    $ cd touchforms/touchforms
+
+    $ pip install -r requirements.pip
+
+if using MySQL
+
+    $ pip install MySQL-python
+
+    # service start couchdb
+
+update local settings
+
+    python manage.py syncdb
