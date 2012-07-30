@@ -1,39 +1,39 @@
 /* === INHERITANCE PATTERN === */
 
-function inherit (subclass, superclass) {
-  subclass._super = superclass._super || {};
-  for (var e in superclass) {
-    if (e != '_super' && e != 'super') {
-      if (typeof(superclass[e]) != 'function') {
-        subclass[e] = superclass[e];
+function inherit (subclass, parentclass) {
+  subclass._parent = parentclass._parent || {};
+  for (var e in parentclass) {
+    if (e != '_parent' && e != 'parent') {
+      if (typeof(parentclass[e]) != 'function') {
+        subclass[e] = parentclass[e];
       } else {
-        if (subclass._super[e] == null) {
-          subclass._super[e] = [];
+        if (subclass._parent[e] == null) {
+          subclass._parent[e] = [];
         }
-        subclass._super[e].push(superclass[e]);
+        subclass._parent[e].push(parentclass[e]);
         subclass[e] = passToParent(e);
       }
     }
   }
-  subclass.super = function (funcName) {
-    return invokeSuper(this, funcName);
+  subclass.parent = function (funcName) {
+    return invokeParent(this, funcName);
   }
 }
 
 function passToParent (funcName) {
   return function () {
-    return this.super(funcName).apply(null, arguments);
+    return this.parent(funcName).apply(null, arguments);
   }
 }
 
-function invokeSuper (self, funcName) {
+function invokeParent (self, funcName) {
   return function () {
-    var basefunc = self._super[funcName].pop();
+    var basefunc = self._parent[funcName].pop();
     if (!basefunc) {
-      throw new Error('function ' + funcName + ' not defined in superclass');
+      throw new Error('function ' + funcName + ' not defined in parentclass');
     }
     var retval = basefunc.apply(self, arguments);
-    self._super[funcName].push(basefunc);
+    self._parent[funcName].push(basefunc);
     return retval;
   }
 }
@@ -41,8 +41,8 @@ function invokeSuper (self, funcName) {
 /* TO USE:
  *
  * early in the constructor of the child class, call:
- *   inherit(this, new SuperClass(...));
- * this is akin to calling super(...); inside a java constructor
+ *   inherit(this, new ParentClass(...));
+ * this is akin to calling parent(...); inside a java constructor
  *
  * this call will load all variables and functions from the parent class
  * into this class.
@@ -52,8 +52,8 @@ function invokeSuper (self, funcName) {
  * in this class
  *
  * to call a parent method explicitly, do:
- *   this.super('someMethod')(args);
- * this is akin to calling super.someMethod(args); in java
+ *   this.parent('someMethod')(args);
+ * this is akin to calling parent.someMethod(args); in java
  */
 
 /* ============================= */
@@ -74,20 +74,8 @@ function SimpleEntry () {
 
   this.shortcuts = [];
 
-  /*
-  this.next = function () {
-    if (this.prevalidate()) {
-      answerQuestion();
-    }
-  }
-  */
-
   this.prevalidate = function (q) {
     return true;
-  }
-
-  this.back = function () {
-    prevQuestion();
   }
 
   this.destroy = function () {
@@ -240,7 +228,7 @@ function IntEntry (parent, length_limit) {
   inherit(this, new FreeTextEntry({parent: parent, domain: 'numeric', length_limit: length_limit || 9}));
 
   this.getAnswer = function () {
-    var val = this.super('getAnswer')();
+    var val = this.parent('getAnswer')();
     return (val != null ? +val : val);
   }
 
@@ -261,7 +249,7 @@ function FloatEntry (parent) {
   inherit(this, new FreeTextEntry({parent: parent}));
 
   this.getAnswer = function () {
-    var val = this.super('getAnswer')();
+    var val = this.parent('getAnswer')();
     return (val != null ? +val : val);
   }
 
@@ -442,13 +430,13 @@ function SingleSelectEntry (args) {
   this.isMulti = false;
 
   this.getAnswer = function () {
-    var selected = this.super('getAnswer')();
+    var selected = this.parent('getAnswer')();
     return selected.length > 0 ? selected[0] : null;
   }
 
   this.setAnswer = function (answer, postLoad) {
     if (this.initted) {
-      this.super('setAnswer')(answer != null ? [answer] : null, postLoad);
+      this.parent('setAnswer')(answer != null ? [answer] : null, postLoad);
     } else {
       this.default_selections = answer;
     }
@@ -485,12 +473,13 @@ function DateEntry (args) {
     this.widget_id = 'datepicker-' + nonce();
     $container.html('<input id="' + this.widget_id + '" type="text"><span id="type" style="margin-left: 15px; font-size: x-small; font-style: italic; color: grey;">(' + this.format.replace('yy', 'yyyy') + ')</span>');
     this.$picker = $container.find('#' + this.widget_id);
-
-		this.$picker.datepicker({
+    var nextYear = new Date().getFullYear() + 1;
+    this.$picker.datepicker({
         changeMonth: true,
         changeYear: true,
-        dateFormat: this.format
-      });
+        dateFormat: this.format,
+        yearRange: "" + (nextYear - 100) + ":" + nextYear
+    });
 
     this.initted = true;
 
@@ -520,7 +509,7 @@ function TimeOfDayEntry (parent) {
   inherit(this, new FreeTextEntry({parent: parent, length_limit: 5}));
 
   this.getAnswer = function () {
-    var val = this.super('getAnswer')();
+    var val = this.parent('getAnswer')();
     var t = this.parseAnswer(val);
     if (t != null) {
       return intpad(t.h, 2) + ':' + intpad(t.m, 2);
@@ -564,7 +553,7 @@ function GeoPointEntry () {
 
   this.load = function (q, $container) {
     this.mkWidget(q, $container);
-    this.setAnswer(this.default_answer);
+    this.setAnswer(this.default_answer, true);
 
     this.commit = function() {
       q.onchange();
@@ -581,6 +570,18 @@ function GeoPointEntry () {
     var H = 250;
     $map.css('width', W+'px');
     $map.css('height', H+'px');
+
+    $map.css('background', '#eee');
+
+    var $wait = $('<div />');
+    $wait.css('margin', 'auto');
+    $wait.css('padding-top', '60px');
+    $wait.css('max-width', '200px');
+    $wait.css('color', '#bbb');
+    $wait.css('font-size', '24pt');
+    $wait.css('line-height', '28pt');
+    $wait.text('please wait while the map loads...');
+    $map.append($wait);
 
     this.lat = null;
     this.lon = null;
@@ -599,7 +600,7 @@ function GeoPointEntry () {
       });
 
     this.$query = $container.find('#query');
-    this.$query.css('width', '83%');
+    this.$query.css('width', '80%');
     this.$search = $container.find('#search');
     this.$search.css('width', '15%');
     this.$search.click(function() {
@@ -610,23 +611,34 @@ function GeoPointEntry () {
 	return false;
       });
 
-    this.map = new google.maps.Map($map[0], {
-      mapTypeId: google.maps.MapTypeId.ROADMAP,
-      center: new google.maps.LatLng(this.DEFAULT.lat, this.DEFAULT.lon),
-      zoom: this.DEFAULT.zoom
-    });
+    var on_gmap_load = function() {
+	$map.empty();
+	widget.map = new google.maps.Map($map[0], {
+		mapTypeId: google.maps.MapTypeId.ROADMAP,
+		center: new google.maps.LatLng(widget.DEFAULT.lat, widget.DEFAULT.lon),
+		zoom: widget.DEFAULT.zoom
+	    });
 
-    this.geocoder = new google.maps.Geocoder();
+	widget.geocoder = new google.maps.Geocoder();
 
-    var widget = this;
-    google.maps.event.addListener(this.map, "center_changed", function() { widget.update_center(); });
+	google.maps.event.addListener(widget.map, "center_changed", function() { widget.update_center(); });
 
-    $ch = $('<img src="data:image/png;base64,' + crosshairs + '">');
-    $ch.css('position', 'relative')
-    $ch.css('top', ((H/*$map.height()*/ - crosshair_size) / 2) + 'px');
-    $ch.css('left', ((W/*$map.width()*/ - crosshair_size) / 2) + 'px');
-    $ch.css('z-index', '500');
-    $map.append($ch);
+	$ch = $('<img src="data:image/png;base64,' + crosshairs + '">');
+	$ch.css('position', 'relative')
+	$ch.css('top', ((H/*$map.height()*/ - crosshair_size) / 2) + 'px');
+	$ch.css('left', ((W/*$map.width()*/ - crosshair_size) / 2) + 'px');
+	$ch.css('z-index', '500');
+	$map.append($ch);
+    };
+
+    var GMAPS_API = 'http://maps.googleapis.com/maps/api/js?key=' + GMAPS_API_KEY + '&sensor=false';
+    if (typeof google == "undefined") {
+	_GMAPS_INIT = on_gmap_load
+        $.getScript(GMAPS_API + '&callback=_GMAPS_INIT');
+    } else {
+	on_gmap_load();
+    }
+
   }
 
   this.getAnswer = function () {
@@ -634,7 +646,7 @@ function GeoPointEntry () {
   }
 
   this.setAnswer = function (answer, postLoad) {
-    if (this.map) {
+    if (postLoad) {
       if (answer) {
         this.set_latlon(answer[0], answer[1]);
         this.map.setCenter(new google.maps.LatLng(answer[0], answer[1]));

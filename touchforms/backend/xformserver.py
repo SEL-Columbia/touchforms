@@ -4,11 +4,13 @@ from SocketServer import ThreadingMixIn
 import threading
 import logging
 import xformplayer
+import touchcare
 import os
 import java.lang
 import time
 from optparse import OptionParser
 from datetime import datetime, timedelta
+import settings
 
 from setup import init_classpath
 init_classpath()
@@ -37,6 +39,9 @@ class XFormHTTPGateway(threading.Thread):
         self.server.shutdown()
 
 class XFormRequestHandler(BaseHTTPRequestHandler):
+    
+    error_content_type = "text/json"
+
     def do_POST(self):
         delay()
 
@@ -77,7 +82,34 @@ class XFormRequestHandler(BaseHTTPRequestHandler):
         self.send_header('Content-Type', 'text/json; charset=utf-8')
         self.end_headers()
         self.wfile.write(reply.encode('utf-8'))
+        
+    def send_error(self, code, message=None):
+        """
+        Override send_error to always return JSON.
+        """
+        # copied and pasted lots of this from the base class
+        # but had to override due to html escaping messing up
+        # the json format of the message
+        try:
+            short, long = self.responses[code]
+        except KeyError:
+            short, long = '???', '???'
+        if message is None:
+            message = short
+        explain = long
+        self.log_error("code %d, message %s", code, message)
+        content = json.dumps({'status': 'error',
+                              'code': code, 
+                              'message': message, 
+                              'explain': explain})
+        self.send_response(code, message)
+        self.send_header("Content-Type", self.error_content_type)
+        self.send_header('Connection', 'close')
+        self.end_headers()
+        if self.command != 'HEAD' and code >= 200 and code not in (204, 304):
+            self.wfile.write(content)
 
+        
 def handle_request (content, **kwargs):
     if 'action' not in content:
         return {'error': 'action required'}
@@ -86,10 +118,29 @@ def handle_request (content, **kwargs):
     nav_mode = content.get('nav', 'prompt')
     try:
         if action == 'new-form':
-            if 'form-name' not in content:
-                return {'error': 'form identifier required'}
-            preload_data = content.get("preloader-data", {})
-            return xformplayer.open_form(content['form-name'], content.get('instance-content'), content.get('lang'), kwargs.get('extensions', []), preload_data, nav_mode)
+            form_fields = {'form-name': 'uid', 'form-content': 'raw', 'form-url': 'url'}
+            form_spec = None
+            for k, v in form_fields.iteritems():
+                try:
+                    form_spec = (v, content[k])
+                    break
+                except KeyError:
+                    pass
+            if not form_spec:
+                return {'error': 'form specification required (form-name, form-content, or form-url)'}
+
+            inst_fields = {'instance-content': 'raw'}
+            inst_spec = None
+            for k, v in inst_fields.iteritems():
+                try:
+                    inst_spec = (v, content[k])
+                    break
+                except KeyError:
+                    pass
+
+            session_data = content.get("session-data", {})
+            return xformplayer.open_form(form_spec, inst_spec,
+                                         content.get('lang'), kwargs.get('extensions', []), session_data, nav_mode, content.get('hq_auth'))
 
         elif action == 'edit-form':
             return {'error': 'unsupported'}
@@ -120,6 +171,12 @@ def handle_request (content, **kwargs):
                 return {'error': 'session id required'}
 
             return xformplayer.go_back(content['session-id'])
+
+        elif action == 'current':
+            if 'session-id' not in content:
+                return {'error': 'session id required'}
+
+            return xformplayer.current_question(content['session-id'])
 
         elif action == 'edit-repeat':
             if 'session-id' not in content:
@@ -162,6 +219,15 @@ def handle_request (content, **kwargs):
                 return {'error': 'staleness window required'}
 
             return xformplayer.purge(content['window'])
+
+        elif action in touchcare.SUPPORTED_ACTIONS:
+            return touchcare.handle_request(content, **kwargs)
+            
+        elif action == 'get-instance':
+            if 'session-id' not in content:
+                return {'error': 'session id required'}
+            xfsess = xformplayer.global_state.get_session(content['session-id'])
+            return {"output": xfsess.output()}
 
         else:
             return {'error': 'unrecognized action'}
@@ -226,6 +292,9 @@ if __name__ == "__main__":
     purger = Purger(options.stale_window)
     purger.start()
     logging.info('purging sessions inactive for more than %d minutes' % options.stale_window)
+
+    if settings.HACKS_MODE:
+        logging.info('hacks mode is enabled, and you should feel bad about that')
 
     try:
         while True:

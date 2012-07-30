@@ -26,105 +26,94 @@ from org.javarosa.core.model import Constants, FormIndex
 from org.javarosa.core.model.data import *
 from org.javarosa.core.model.data.helper import Selection
 from org.javarosa.model.xform import XFormSerializingVisitor as FormSerializer
-from org.javarosa.core.model.instance import InstanceInitializationFactory as IIF
+
+from touchcare import CCInstances
 
 DEBUG = False
 
 class NoSuchSession(Exception):
-  pass
+    pass
 
 class global_state_mgr:
-  instances = {}
-  instance_id_counter = 0
+    instances = {}
+    instance_id_counter = 0
 
-  session_cache = {}
-  session_id_counter = 0
-  
-  def __init__(self):
-    self.lock = threading.Lock()
-  
-  def new_session(self, xfsess):
-    with self.lock:
-      self.session_id_counter += 1
-      self.session_cache[self.session_id_counter] = xfsess
-    return self.session_id_counter
-  
-  def get_session(self, session_id):
-    with self.lock:
-      try:
-        return self.session_cache[session_id]
-      except KeyError:
-        raise NoSuchSession()
+    session_cache = {}
+    session_id_counter = 0
     
-  #todo: we're not calling this currently, but should, or else xform sessions will hang around in memory forever    
-  def destroy_session(self, session_id):
-    with self.lock:
-      try:
-        del self.session_cache[session_id]
-      except KeyError:
-        raise NoSuchSession()
+    def __init__(self):
+        self.lock = threading.Lock()
     
-  def save_instance(self, data):        
-    with self.lock:
-      self.instance_id_counter += 1
-      self.instances[self.instance_id_counter] = data
-    return self.instance_id_counter
+    def new_session(self, xfsess):
+        with self.lock:
+            self.session_id_counter += 1
+            self.session_cache[self.session_id_counter] = xfsess
+        return self.session_id_counter
+    
+    def get_session(self, session_id):
+        with self.lock:
+            try:
+                return self.session_cache[session_id]
+            except KeyError:
+                raise NoSuchSession()
+        
+    #todo: we're not calling this currently, but should, or else xform sessions will hang around in memory forever        
+    def destroy_session(self, session_id):
+        with self.lock:
+            try:
+                del self.session_cache[session_id]
+            except KeyError:
+                raise NoSuchSession()
+        
+    def save_instance(self, data):                
+        with self.lock:
+            self.instance_id_counter += 1
+            self.instances[self.instance_id_counter] = data
+        return self.instance_id_counter
 
-  #todo: add ways to get xml, delete xml, and option not to save xml at all
+    #todo: add ways to get xml, delete xml, and option not to save xml at all
 
-  def purge(self, older_than):
-    num_sess_purged = 0
-    num_sess_active = 0
+    def purge(self, older_than):
+        num_sess_purged = 0
+        num_sess_active = 0
 
-    with self.lock:
-      now = time.time()
-      for sess_id, sess in self.session_cache.items():
-        if now - sess.last_activity > older_than:
-          del self.session_cache[sess_id]
-          num_sess_purged += 1
-        else:
-          num_sess_active += 1
-      #what about saved instances? we don't track when they were saved
-      #for now will just assume instances are not saved
+        with self.lock:
+            now = time.time()
+            for sess_id, sess in self.session_cache.items():
+                if now - sess.last_activity > older_than:
+                    del self.session_cache[sess_id]
+                    num_sess_purged += 1
+                else:
+                    num_sess_active += 1
+            #what about saved instances? we don't track when they were saved
+            #for now will just assume instances are not saved
 
-    return {'purged': num_sess_purged, 'active': num_sess_active}
+        return {'purged': num_sess_purged, 'active': num_sess_active}
 
 global_state = global_state_mgr()
   
 
-def load_form(xform, instance=None, extensions=[], preload_data={}):
+def load_form(xform, instance=None, extensions=[], session_data={}, api_auth=None):
     form = XFormParser(StringReader(xform)).parse()
     if instance != None:
         XFormParser.loadXmlInstance(form, StringReader(instance))
 
-    customhandlers.attach_handlers(form, preload_data, extensions)
+    # retrieve preloaders out of session_data (for backwards compatibility)
+    customhandlers.attach_handlers(form, extensions, session_data.get('preloaders', {}))
 
-    form.initialize(instance == None, IIF())
+    form.initialize(instance == None, CCInstances(session_data, api_auth))
     return form
 
 class SequencingException(Exception):
     pass
 
 class XFormSession:
-    def __init__(self, xform_raw=None, xform_path=None, instance_raw=None, instance_path=None,
-                 init_lang=None, preload_data={}, extensions=[], nav_mode='prompt'):
+    def __init__(self, xform, instance=None, init_lang=None, session_data={}, extensions=[], nav_mode='prompt', api_auth=None):
         self.lock = threading.Lock()
         self.nav_mode = nav_mode
         self.seq_id = 0
 
-        def content_or_path(content, path):
-            if content != None:
-                return content
-            elif path != None:
-                with codecs.open(path, encoding='utf-8') as f:
-                    return f.read()
-            else:
-                return None
-
-        xform = content_or_path(xform_raw, xform_path)
-        instance = content_or_path(instance_raw, instance_path)
-
-        self.form = load_form(xform, instance, extensions, preload_data)
+        self.form = load_form(xform, instance, extensions, session_data, api_auth)
         self.fem = FormEntryModel(self.form, FormEntryModel.REPEAT_STRUCTURE_NON_LINEAR)
         self.fec = FormEntryController(self.fem)
 
@@ -307,9 +296,9 @@ class XFormSession:
             elif event['datatype'] == 'time':
                 event['answer'] = to_ptime(value.getValue())
             elif event['datatype'] == 'select':
-                event['answer'] = value.getValue().index + 1
+                event['answer'] = choice(q, selection=value.getValue()).ordinal()
             elif event['datatype'] == 'multiselect':
-                event['answer'] = [sel.index + 1 for sel in value.getValue()]
+                event['answer'] = [choice(q, selection=sel).ordinal() for sel in value.getValue()]
             elif event['datatype'] == 'geo':
                 event['answer'] = list(value.getValue())[:2]
 
@@ -446,12 +435,21 @@ class XFormSession:
         return resp
 
 class choice(object):
-    def __init__(self, q, select_choice):
+    def __init__(self, q, select_choice=None, selection=None):
         self.q = q
-        self.select_choice = select_choice
+
+        if select_choice is not None:
+            self.select_choice = select_choice
+
+        elif selection is not None:
+            selection.attachChoice(q.getFormElement())
+            self.select_choice = selection.choice
 
     def to_sel(self):
         return Selection(self.select_choice)
+
+    def ordinal(self):
+        return self.to_sel().index + 1
 
     def __repr__(self):
         return self.q.getSelectChoiceText(self.select_choice)
@@ -459,11 +457,36 @@ class choice(object):
     def __json__(self):
         return json.dumps(repr(self))
 
-def open_form(form_name, instance_xml=None, lang=None, extensions=[], preload_data={}, nav_mode='prompt'):
-    if not os.path.exists(form_name):
-        return {'error': 'no form found at %s' % form_name}
+def load_file(path):
+    if not os.path.exists(path):
+        raise Exception('no form found at %s' % path)
 
-    xfsess = XFormSession(xform_path=form_name, instance_raw=instance_xml, init_lang=lang, preload_data=preload_data, extensions=extensions, nav_mode=nav_mode)
+    with codecs.open(path, encoding='utf-8') as f:
+        return f.read()
+
+def load_url(url):
+    raise Exception('not supported yet')
+
+def get_loader(spec):
+    if not spec:
+        return lambda: None
+
+    type, val = spec
+    return {
+        'uid': lambda: load_file(val),
+        'raw': lambda: val,
+        'url': lambda: load_url(val),
+    }[type]
+
+
+def open_form(form_spec, inst_spec=None, lang=None, extensions=[], session_data={}, nav_mode='prompt', api_auth=None):
+    try:
+        xform_xml = get_loader(form_spec)()
+        instance_xml = get_loader(inst_spec)()
+    except Exception, e:
+        return {'error': str(e)}
+
+    xfsess = XFormSession(xform_xml, instance_xml, init_lang=lang, session_data=session_data, extensions=extensions, nav_mode=nav_mode, api_auth=api_auth)
     sess_id = global_state.new_session(xfsess)
     return xfsess.response({'session_id': sess_id, 'title': xfsess.form_title(), 'langs': xfsess.get_locales()})
 
@@ -525,6 +548,10 @@ def set_locale(session_id, lang):
     with global_state.get_session(session_id) as xfsess:
         ev = xfsess.set_locale(lang)
         return xfsess.response({}, ev)
+
+def current_question(session_id):
+    with global_state.get_session(session_id) as xfsess:
+        return xfsess.response({}, xfsess.cur_event)
 
 def next_event (xfsess):
     ev = xfsess.next_event()
